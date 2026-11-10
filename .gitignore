@@ -1,0 +1,18 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vite
+
+# Secretos y entorno
+.env
+.env.*
+!.env.example
+
+# Builds y temporales
+*.log
+tsconfig.tsbuildinfo
+
+# SO / editor
+.DS_Store
+Thumbs.db
