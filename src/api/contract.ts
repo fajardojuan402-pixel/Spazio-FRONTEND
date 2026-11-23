@@ -2,7 +2,10 @@
 // Lo implementan el cliente HTTP real (http.ts) y el adaptador mock (mock/).
 
 import type {
+  AddAvailabilityRequest,
+  AddRecurringAvailabilityRequest,
   AvailabilityConflict,
+  AvailabilityItem,
   BookingStatus,
   CancelPreviewResponse,
   CancelResponse,
@@ -13,6 +16,7 @@ import type {
   EstadoFiltro,
   GeocodeResult,
   GeocodeSuggestion,
+  HostSpaceItem,
   LoginRequest,
   LoginResponse,
   MyBookingsResponse,
@@ -22,6 +26,7 @@ import type {
   SearchParams,
   SpaceDetail,
   SpaceSummary,
+  UpdateSpaceRequest,
   WompiCheckout,
   WompiProcessRequest,
   WompiProcessResponse,
@@ -46,6 +51,15 @@ export interface ApiClient {
 
   // Publicar (RF-03, RF-05)
   createSpace(body: CreateSpaceRequest): Promise<CreateSpaceResponse>
+
+  // Gestión de "Mis espacios" por el anfitrión (RF-03, RF-05)
+  mySpaces(): Promise<HostSpaceItem[]>
+  updateSpace(id: string, body: UpdateSpaceRequest): Promise<void>
+  deleteSpace(id: string): Promise<void>
+  listAvailabilities(spaceId: string): Promise<AvailabilityItem[]>
+  addAvailability(body: AddAvailabilityRequest): Promise<AvailabilityItem>
+  addRecurringAvailability(body: AddRecurringAvailabilityRequest): Promise<AvailabilityItem[]>
+  removeAvailability(id: string): Promise<void>
 
   // Reservas y pago (RF-06, RF-07, RF-08, RF-15)
   createBooking(body: CreateBookingRequest): Promise<CreateBookingResponse>

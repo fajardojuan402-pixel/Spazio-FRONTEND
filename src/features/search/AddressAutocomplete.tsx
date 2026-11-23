@@ -1,24 +1,28 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { MapPin } from 'lucide-react'
 import { api } from '../../api/client'
 import type { GeocodeSuggestion } from '../../api/types'
+
+/** Métodos imperativos para que el padre controle el dropdown. */
+export interface AddressAutocompleteHandle {
+  /** Evita que el próximo cambio de `value` reabra el dropdown de sugerencias. */
+  suppressNextOpen: () => void
+}
 
 /**
  * Campo de dirección con autocompletar (estilo Google Places). Mientras el
  * usuario escribe (con debounce) consulta /geocode/suggest y muestra un
  * dropdown. Al elegir una sugerencia entrega su label + coordenadas.
  */
-export default function AddressAutocomplete({
-  value,
-  onChange,
-  onPick,
-  id = 'place',
-}: {
-  value: string
-  onChange: (v: string) => void
-  onPick: (s: GeocodeSuggestion) => void
-  id?: string
-}) {
+const AddressAutocomplete = forwardRef<
+  AddressAutocompleteHandle,
+  {
+    value: string
+    onChange: (v: string) => void
+    onPick: (s: GeocodeSuggestion) => void
+    id?: string
+  }
+>(function AddressAutocomplete({ value, onChange, onPick, id = 'place' }, ref) {
   const [sugerencias, setSugerencias] = useState<GeocodeSuggestion[]>([])
   const [abierto, setAbierto] = useState(false)
   const [activo, setActivo] = useState(-1)
@@ -27,8 +31,15 @@ export default function AddressAutocomplete({
   const debounce = useRef<ReturnType<typeof setTimeout>>()
   // Evita sobrescribir sugerencias con una respuesta vieja (petición desfasada).
   const reqId = useRef(0)
-  // Cuando el usuario acaba de elegir, no reabrimos el dropdown por el cambio de texto.
+  // Cuando el usuario acaba de elegir (o el padre actualiza el valor de forma
+  // programática, p. ej. al arrastrar el pin), no reabrimos el dropdown.
   const acabaDeElegir = useRef(false)
+
+  useImperativeHandle(ref, () => ({
+    suppressNextOpen: () => {
+      acabaDeElegir.current = true
+    },
+  }))
 
   useEffect(() => {
     if (acabaDeElegir.current) {
@@ -145,4 +156,6 @@ export default function AddressAutocomplete({
       )}
     </div>
   )
-}
+})
+
+export default AddressAutocomplete

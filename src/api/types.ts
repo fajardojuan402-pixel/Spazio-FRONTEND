@@ -100,6 +100,8 @@ export interface SearchParams {
 /** Resultado de búsqueda (lista de P-03). */
 export interface SpaceSummary {
   id: string
+  /** Id del anfitrión propietario (para prevenir la auto-reserva). */
+  hostId: string
   titulo: string
   direccion: string
   distanciaKm: number
@@ -151,6 +153,59 @@ export interface CreateSpaceRequest {
 export interface CreateSpaceResponse {
   id: string
   rolAnfitrionActivado: boolean
+}
+
+// ---------------------------------------------------------------------------
+// Gestión de "Mis espacios" por el anfitrión (RF-03/RF-05) — SDD M-02
+// Rutas backend: GET /spaces/my-spaces, PUT /spaces/{id}, DELETE /spaces/{id},
+// GET/POST/DELETE /availabilities.
+// ---------------------------------------------------------------------------
+
+/** Un periodo de disponibilidad ya guardado (con id para poder eliminarlo). */
+export interface AvailabilityItem {
+  id: string
+  fecha: string // "2026-10-14"
+  desde: string // "08:00"
+  hasta: string // "18:00"
+  /** Verdadero si el periodo ya terminó respecto a ahora. */
+  vencido: boolean
+}
+
+/** Tarjeta de "Mis espacios" (P-10). */
+export interface HostSpaceItem {
+  id: string
+  titulo: string
+  direccion: string
+  precioHora: number
+  activo: boolean
+  foto: string
+  /** Número de periodos de disponibilidad aún vigentes. */
+  periodosVigentes: number
+}
+
+/** Cambios aplicables a un espacio propio (precio, estado, descripción). */
+export interface UpdateSpaceRequest {
+  precioHora?: number
+  activo?: boolean
+  condiciones?: string
+}
+
+export interface AddAvailabilityRequest {
+  spaceId: string
+  fecha: string // "2026-10-14"
+  desde: string // "08:00"
+  hasta: string // "18:00"
+}
+
+/** Regla de disponibilidad recurrente (RF-05 / H3). */
+export interface AddRecurringAvailabilityRequest {
+  spaceId: string
+  /** Días de la semana: 0=Lunes ... 6=Domingo. */
+  weekdays: number[]
+  startDate: string // "2026-11-20"
+  endDate: string // "2026-12-20"
+  desde: string // "08:00"
+  hasta: string // "18:00"
 }
 
 /** 409 al agregar disponibilidad que se traslapa (RN-14). */

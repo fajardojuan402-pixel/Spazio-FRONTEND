@@ -8,21 +8,59 @@ import { formatCOP } from '../../lib/format'
 
 const BOGOTA: [number, number] = [4.6097, -74.0817]
 
-/** Pin de precio tipo "burbuja". Verde teal si está seleccionado. */
-function priceIcon(precio: number, active: boolean): L.DivIcon {
-  const bg = active ? '#14576a' : '#ffffff'
-  const fg = active ? '#ffffff' : '#14303D'
-  const border = active ? '#14576a' : '#E3E8EC'
+/** Glifos SVG por tipo de vehículo (trazo blanco sobre el pin de color). */
+const VEHICLE_GLYPH: Record<string, string> = {
+  // Carro
+  carro:
+    '<path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14m-14 0v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h8v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4M7.5 13.5h.01M16.5 13.5h.01" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  // Moto
+  moto:
+    '<circle cx="6" cy="16" r="2.3" fill="none" stroke="#fff" stroke-width="1.6"/><circle cx="18" cy="16" r="2.3" fill="none" stroke="#fff" stroke-width="1.6"/><path d="M8 16h5l2-4h3m-9 4 2.5-5H15m-7.5 0H5" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  // Ambos (carro + moto): usamos el de carro con un punto extra
+  ambos:
+    '<path d="M5 11l1.5-4.5A2 2 0 0 1 8.4 5h7.2a2 2 0 0 1 1.9 1.5L19 11m-14 0h14m-14 0v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h8v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4M7.5 13.5h.01M16.5 13.5h.01" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+}
+
+/**
+ * Pin llamativo de alto contraste con sombra (RF-01 / H6). Muestra el icono del
+ * tipo de vehículo, una etiqueta de precio y, si el espacio es cubierto, un
+ * distintivo. Cambia de color cuando está seleccionado.
+ */
+function priceIcon(
+  precio: number,
+  active: boolean,
+  tipoVehiculo: string,
+  cubierto: boolean,
+): L.DivIcon {
+  const bg = active ? '#0f766e' : '#14576a' // teal fuerte / teal
+  const glyph = VEHICLE_GLYPH[tipoVehiculo] ?? VEHICLE_GLYPH.carro
+  const cubiertoBadge = cubierto
+    ? `<span style="
+        display:inline-block; margin-left:4px; padding:0 4px; border-radius:4px;
+        background:#fde68a; color:#78350f; font-size:9px; font-weight:800;
+        vertical-align:middle;">CUBIERTO</span>`
+    : ''
   return L.divIcon({
     className: 'spazio-price-pin',
-    html: `<div style="
-      transform: translate(-50%, -100%);
-      background:${bg}; color:${fg}; border:1.5px solid ${border};
-      border-radius:999px; padding:4px 10px; font-size:12px; font-weight:700;
-      white-space:nowrap; box-shadow:0 2px 8px rgba(20,48,61,.18);
-      font-family:Inter,system-ui,sans-serif;">${formatCOP(precio)}/h</div>`,
-    iconSize: [0, 0],
-    iconAnchor: [0, 0],
+    html: `<div style="position:relative; width:40px; height:52px;">
+      <svg width="40" height="52" viewBox="0 0 40 52" style="
+        position:absolute; top:0; left:0;
+        filter: drop-shadow(0 3px 4px rgba(0,0,0,.4));">
+        <path d="M20 2C11.2 2 4 9.0 4 17.6c0 10.8 13.2 21.4 15.1 22.9a1.4 1.4 0 0 0 1.8 0C22.8 39 36 28.4 36 17.6 36 9.0 28.8 2 20 2Z"
+          fill="${bg}" stroke="#ffffff" stroke-width="2.5"/>
+        <svg x="8" y="5" width="24" height="24" viewBox="0 0 24 24">${glyph}</svg>
+      </svg>
+      <div style="
+        position:absolute; top:44px; left:50%; transform:translateX(-50%);
+        white-space:nowrap; background:#ffffff; color:#14303D;
+        border:1.5px solid ${bg}; border-radius:999px; padding:1px 8px;
+        font-size:11px; font-weight:800; box-shadow:0 2px 6px rgba(20,48,61,.25);
+        font-family:Inter,system-ui,sans-serif;">${formatCOP(precio)}/h${cubiertoBadge}</div>
+    </div>`,
+    // 40×52 con la punta del pin en la base (centro-inferior del SVG, y=41).
+    iconSize: [40, 52],
+    iconAnchor: [20, 41],
+    popupAnchor: [0, -38],
   })
 }
 
@@ -149,7 +187,7 @@ export default function MapPanel({
           <Marker
             key={s.id}
             position={[s.lat, s.lng]}
-            icon={priceIcon(s.precioHora, selected?.id === s.id)}
+            icon={priceIcon(s.precioHora, selected?.id === s.id, s.tipoVehiculo, s.cubierto)}
             eventHandlers={{ click: () => onSelect?.(s.id) }}
           >
             <Popup>

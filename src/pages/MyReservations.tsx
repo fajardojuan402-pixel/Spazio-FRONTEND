@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { CalendarCheck, CalendarX, CircleCheck, Search as SearchIcon, Timer } from 'lucide-react'
+import { CalendarCheck, CalendarX, CircleCheck, Clock, Hash, MapPin, Search as SearchIcon, Timer } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import Button from '../components/ui/Button'
+import Modal from '../components/ui/Modal'
 import Skeleton from '../components/ui/Skeleton'
 import Alert from '../components/ui/Alert'
 import EmptyState from '../components/ui/EmptyState'
@@ -40,6 +41,7 @@ export default function MyReservations() {
   const cancelar = useCancelBooking()
   const toast = useToast()
   const [aCancelar, setACancelar] = useState<BookingListItem | null>(null)
+  const [aVer, setAVer] = useState<BookingListItem | null>(null)
 
   const contadores = data?.contadores ?? { todas: 0, confirmada: 0, cancelada: 0, expirada: 0 }
   const items = data?.items ?? []
@@ -173,7 +175,7 @@ export default function MyReservations() {
                         {r.estado === 'CONFIRMADA' ? (
                           <button onClick={() => setACancelar(r)} className="btn-outline px-4 py-2 text-sm">Cancelar</button>
                         ) : (
-                          <button className="text-sm font-semibold text-teal hover:underline">Ver detalles</button>
+                          <button onClick={() => setAVer(r)} className="text-sm font-semibold text-teal hover:underline">Ver detalles</button>
                         )}
                       </td>
                     </tr>
@@ -199,7 +201,7 @@ export default function MyReservations() {
                     {r.estado === 'CONFIRMADA' ? (
                       <button onClick={() => setACancelar(r)} className="btn-outline px-4 py-2 text-sm">Cancelar</button>
                     ) : (
-                      <span className="text-sm text-subtle">{r.motivo}</span>
+                      <button onClick={() => setAVer(r)} className="text-sm font-semibold text-teal hover:underline">Ver detalles</button>
                     )}
                   </div>
                 </div>
@@ -229,7 +231,78 @@ export default function MyReservations() {
           confirmando={cancelar.isPending}
         />
       )}
+
+      {aVer && (
+        <ReservationDetailsModal reserva={aVer} open={!!aVer} onClose={() => setAVer(null)} />
+      )}
     </Layout>
+  )
+}
+
+/** Modal de resumen de una reserva (referencia, espacio, fechas, horario, estado). */
+function ReservationDetailsModal({
+  reserva,
+  open,
+  onClose,
+}: {
+  reserva: BookingListItem
+  open: boolean
+  onClose: () => void
+}) {
+  const meta = STATUS_META[reserva.estado]
+  return (
+    <Modal open={open} onClose={onClose} title="Detalle de la reserva">
+      <div className="flex items-center gap-3">
+        <img src={reserva.espacio.foto} alt="" className="h-14 w-14 flex-none rounded-lg object-cover" />
+        <div className="min-w-0">
+          <p className="truncate font-bold text-ink">{reserva.espacio.titulo}</p>
+          <p className="truncate text-sm text-subtle">{reserva.espacio.direccion}</p>
+        </div>
+        <Badge tone={meta.tone}>{meta.label}</Badge>
+      </div>
+
+      <dl className="mt-5 space-y-3">
+        <DetailRow icon={<Hash size={18} />} label="Referencia">
+          <span className="font-mono text-sm">{reserva.id}</span>
+        </DetailRow>
+        <DetailRow icon={<CalendarCheck size={18} />} label="Fecha">
+          {formatShortDate(reserva.fecha)}
+        </DetailRow>
+        <DetailRow icon={<Clock size={18} />} label="Horario">
+          {reserva.desde} – {reserva.hasta} · {reserva.horas} hora{reserva.horas !== 1 ? 's' : ''}
+        </DetailRow>
+        <DetailRow icon={<MapPin size={18} />} label="Ciudad">
+          {reserva.ciudad}
+        </DetailRow>
+        <DetailRow icon={<CircleCheck size={18} />} label="Monto">
+          {reserva.monto ? `${formatCOP(reserva.monto)} COP` : '—'}
+        </DetailRow>
+        {reserva.motivo && (
+          <DetailRow icon={<CalendarX size={18} />} label="Estado">
+            {reserva.motivo}
+          </DetailRow>
+        )}
+      </dl>
+
+      <div className="mt-6 flex justify-end gap-2">
+        <Link to={`/espacio/${reserva.espacio.id}`} className="btn-outline px-4 py-2 text-sm">
+          Ver espacio
+        </Link>
+        <Button variant="ghost" onClick={onClose}>Cerrar</Button>
+      </div>
+    </Modal>
+  )
+}
+
+function DetailRow({ icon, label, children }: { icon: React.ReactNode; label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 flex-none text-teal">{icon}</span>
+      <div>
+        <dt className="text-sm font-semibold text-ink">{label}</dt>
+        <dd className="text-sm text-subtle">{children}</dd>
+      </div>
+    </div>
   )
 }
 

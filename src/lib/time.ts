@@ -7,6 +7,21 @@ export function hoyISO(): string {
   return bogota.toISOString().slice(0, 10)
 }
 
+/** Construye un "YYYY-MM-DD" a partir de año, mes (0-11) y día, sin desfase UTC. */
+export function toISODate(year: number, monthIndex: number, day: number): string {
+  const mm = String(monthIndex + 1).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  return `${year}-${mm}-${dd}`
+}
+
+/**
+ * Compara dos fechas "YYYY-MM-DD" como texto (orden cronológico).
+ * Devuelve <0 si a es anterior, 0 si igual, >0 si a es posterior.
+ */
+export function compareISODate(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0
+}
+
 /** Convierte "HH:mm" a minutos desde medianoche. */
 export function toMinutes(hhmm: string): number {
   const [h, m] = hhmm.split(':').map(Number)

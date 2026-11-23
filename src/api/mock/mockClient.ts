@@ -5,6 +5,9 @@
 import type { ApiClient } from '../contract'
 import {
   ApiException,
+  type AddAvailabilityRequest,
+  type AddRecurringAvailabilityRequest,
+  type AvailabilityItem,
   type BookingListItem,
   type BookingStatus,
   type CancelPreviewResponse,
@@ -18,6 +21,7 @@ import {
   type EstadoReserva,
   type GeocodeResult,
   type GeocodeSuggestion,
+  type HostSpaceItem,
   type LoginRequest,
   type LoginResponse,
   type MyBookingsResponse,
@@ -27,6 +31,7 @@ import {
   type SearchParams,
   type SpaceDetail,
   type SpaceSummary,
+  type UpdateSpaceRequest,
   type WompiCheckout,
   type WompiProcessRequest,
   type WompiProcessResponse,
@@ -68,11 +73,23 @@ function uid(prefix: string): string {
 const cuentas = new Map<string, { nombre: string; rolAnfitrion: boolean }>()
 cuentas.set(SEED_USER.email, { nombre: SEED_USER.nombre, rolAnfitrion: SEED_USER.rolAnfitrion })
 
+interface MockAvailability {
+  id: string
+  spaceId: string
+  fecha: string
+  desde: string
+  hasta: string
+}
+
 export class MockApiClient implements ApiClient {
   private spaces: SpaceDetail[] = SEED_SPACES.map((s) => ({ ...s }))
   private bookings: Map<string, MockBooking> = new Map()
   // Reservas que ya se muestran en "Mis reservas" (semilla del Figma).
   private listados: BookingListItem[] = seedBookings()
+  // Disponibilidades gestionables por espacio. Se siembran de forma perezosa
+  // a partir de los periodos del espacio la primera vez que se consultan.
+  private availabilities: Map<string, MockAvailability[]> = new Map()
+  private availSembrados = new Set<string>()
 
   // --- Auth -----------------------------------------------------------------
 
@@ -138,6 +155,7 @@ export class MockApiClient implements ApiClient {
     if (params.radioKm < 1) return delay<SpaceSummary[]>([], 500)
     const list: SpaceSummary[] = this.spaces.map((s) => ({
       id: s.id,
+      hostId: s.hostId,
       titulo: s.titulo,
       direccion: s.direccion,
       distanciaKm: s.distanciaKm,
@@ -171,6 +189,7 @@ export class MockApiClient implements ApiClient {
     const primero = body.periodos[0]
     const nuevo: SpaceDetail = {
       id,
+      hostId: SEED_USER.id,
       titulo: body.cubierto ? 'Parqueadero cubierto' : 'Parqueadero',
       direccion: body.direccion,
       distanciaKm: 0.5,
@@ -197,6 +216,164 @@ export class MockApiClient implements ApiClient {
     const activadoAhora = cuenta ? !cuenta.rolAnfitrion : true
     if (cuenta) cuenta.rolAnfitrion = true
     return delay({ id, rolAnfitrionActivado: activadoAhora })
+  }
+
+  // --- Gestión de "Mis espacios" por el anfitrión ---------------------------
+
+  /** Siembra (una sola vez por espacio) las disponibilidades a partir de sus periodos. */
+  private seedAvailabilities(space: SpaceDetail): void {
+    if (this.availSembrados.has(space.id)) return
+    this.availSembrados.add(space.id)
+    const lista: MockAvailability[] = space.periodos.map((p, i) => ({
+      id: `${space.id}-av-${i}`,
+      spaceId: space.id,
+      fecha: p.inicio.slice(0, 10),
+      desde: p.inicio.slice(11, 16),
+      hasta: p.fin.slice(11, 16),
+    }))
+    this.availabilities.set(space.id, lista)
+  }
+
+  private availItem(a: MockAvailability): AvailabilityItem {
+    const finMs = new Date(`${a.fecha}T${a.hasta}:00`).getTime()
+    return { id: a.id, fecha: a.fecha, desde: a.desde, hasta: a.hasta, vencido: finMs <= Date.now() }
+  }
+
+  async mySpaces(): Promise<HostSpaceItem[]> {
+    // En el mock todos los espacios pertenecen al usuario semilla (anfitrión).
+    const items: HostSpaceItem[] = this.spaces.map((s) => {
+      this.seedAvailabilities(s)
+      const avails = this.availabilities.get(s.id) ?? []
+      return {
+        id: s.id,
+        titulo: s.titulo,
+        direccion: s.direccion,
+        precioHora: s.precioHora,
+        activo: (s as SpaceDetail & { activo?: boolean }).activo ?? true,
+        foto: s.foto,
+        periodosVigentes: avails.filter((a) => !this.availItem(a).vencido).length,
+      }
+    })
+    return delay(items)
+  }
+
+  async updateSpace(id: string, body: UpdateSpaceRequest): Promise<void> {
+    const s = this.spaces.find((x) => x.id === id)
+    if (!s) throw new ApiException(404, { code: 'not_found', message: 'Espacio no encontrado.' })
+    if (body.precioHora != null) s.precioHora = body.precioHora
+    if (body.condiciones != null) s.descripcion = body.condiciones
+    if (body.activo != null) (s as SpaceDetail & { activo?: boolean }).activo = body.activo
+    return delay(undefined)
+  }
+
+  async deleteSpace(id: string): Promise<void> {
+    this.spaces = this.spaces.filter((x) => x.id !== id)
+    this.availabilities.delete(id)
+    return delay(undefined)
+  }
+
+  async listAvailabilities(spaceId: string): Promise<AvailabilityItem[]> {
+    const s = this.spaces.find((x) => x.id === spaceId)
+    if (!s) throw new ApiException(404, { code: 'not_found', message: 'Espacio no encontrado.' })
+    this.seedAvailabilities(s)
+    const avails = this.availabilities.get(spaceId) ?? []
+    return delay(avails.map((a) => this.availItem(a)))
+  }
+
+  async addAvailability(body: AddAvailabilityRequest): Promise<AvailabilityItem> {
+    const s = this.spaces.find((x) => x.id === body.spaceId)
+    if (!s) throw new ApiException(404, { code: 'not_found', message: 'Espacio no encontrado.' })
+    this.seedAvailabilities(s)
+    const avails = this.availabilities.get(body.spaceId) ?? []
+    // RN-14: rechaza traslapes en el mismo día.
+    const choque = avails.find(
+      (a) =>
+        a.fecha === body.fecha &&
+        a.desde < body.hasta &&
+        body.desde < a.hasta,
+    )
+    if (choque) {
+      throw new ApiException(400, {
+        code: 'availability_overlap',
+        message: `El periodo se traslapa con ${choque.desde} – ${choque.hasta} del mismo día.`,
+      })
+    }
+    const nuevo: MockAvailability = {
+      id: uid('av'),
+      spaceId: body.spaceId,
+      fecha: body.fecha,
+      desde: body.desde,
+      hasta: body.hasta,
+    }
+    this.availabilities.set(body.spaceId, [...avails, nuevo])
+    return delay(this.availItem(nuevo))
+  }
+
+  async addRecurringAvailability(
+    body: AddRecurringAvailabilityRequest,
+  ): Promise<AvailabilityItem[]> {
+    const s = this.spaces.find((x) => x.id === body.spaceId)
+    if (!s) throw new ApiException(404, { code: 'not_found', message: 'Espacio no encontrado.' })
+    this.seedAvailabilities(s)
+    const avails = this.availabilities.get(body.spaceId) ?? []
+
+    const weekdayDeISO = (iso: string): number => {
+      const [y, m, d] = iso.split('-').map(Number)
+      return (new Date(y, m - 1, d).getDay() + 6) % 7 // 0=Lun..6=Dom
+    }
+    const sumarDia = (iso: string): string => {
+      const [y, m, d] = iso.split('-').map(Number)
+      const dt = new Date(y, m - 1, d + 1)
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`
+    }
+
+    const creados: MockAvailability[] = []
+    const acumulado = [...avails]
+    let actual = body.startDate
+    let guard = 0
+    while (actual <= body.endDate && guard < 3660) {
+      guard += 1
+      if (body.weekdays.includes(weekdayDeISO(actual))) {
+        const choque = acumulado.find(
+          (a) => a.fecha === actual && a.desde < body.hasta && body.desde < a.hasta,
+        )
+        if (!choque) {
+          const nuevo: MockAvailability = {
+            id: uid('av'),
+            spaceId: body.spaceId,
+            fecha: actual,
+            desde: body.desde,
+            hasta: body.hasta,
+          }
+          creados.push(nuevo)
+          acumulado.push(nuevo)
+        }
+      }
+      actual = sumarDia(actual)
+    }
+
+    if (creados.length === 0) {
+      throw new ApiException(400, {
+        code: 'availability_overlap',
+        message: 'La regla recurrente no generó ningún bloque nuevo (revisa días, fechas y traslapes).',
+      })
+    }
+
+    this.availabilities.set(body.spaceId, acumulado)
+    return delay(creados.map((a) => this.availItem(a)))
+  }
+
+  async removeAvailability(id: string): Promise<void> {
+    for (const [spaceId, avails] of this.availabilities) {
+      if (avails.some((a) => a.id === id)) {
+        this.availabilities.set(
+          spaceId,
+          avails.filter((a) => a.id !== id),
+        )
+        break
+      }
+    }
+    return delay(undefined)
   }
 
   // --- Reservas y pago ------------------------------------------------------

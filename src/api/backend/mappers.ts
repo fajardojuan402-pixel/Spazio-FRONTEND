@@ -59,6 +59,33 @@ export function fotosDe(space: BackendSpace): string[] {
   return [...fotos, ...FOTOS_FALLBACK].slice(0, 3)
 }
 
+/** Un bloque horario concreto (de un día específico). */
+export interface BloqueHorario {
+  desde: string // "HH:mm"
+  hasta: string // "HH:mm"
+}
+
+/**
+ * Agrupa los periodos por fecha ("YYYY-MM-DD") devolviendo, para cada día, sus
+ * bloques horarios ordenados. NO une horas de días distintos: cada fecha
+ * conserva sus propios bloques (p. ej. un día 08:00–12:00 y otro 14:00–18:00
+ * quedan separados, no fusionados en 08:00–18:00).
+ */
+export function bloquesPorFecha(periodos: Periodo[]): Map<string, BloqueHorario[]> {
+  const mapa = new Map<string, BloqueHorario[]>()
+  for (const p of periodos) {
+    const fecha = p.inicio.slice(0, 10)
+    const bloque: BloqueHorario = { desde: p.inicio.slice(11, 16), hasta: p.fin.slice(11, 16) }
+    const lista = mapa.get(fecha) ?? []
+    lista.push(bloque)
+    mapa.set(fecha, lista)
+  }
+  for (const lista of mapa.values()) {
+    lista.sort((a, b) => a.desde.localeCompare(b.desde))
+  }
+  return mapa
+}
+
 export function derivarHorario(periodos: Periodo[]): {
   horario: string
   horarioApertura: { desde: string; hasta: string }
@@ -66,21 +93,35 @@ export function derivarHorario(periodos: Periodo[]): {
   if (periodos.length === 0) {
     return { horario: 'Horario por confirmar', horarioApertura: { desde: '00:00', hasta: '23:00' } }
   }
-  let desde = '23:59'
-  let hasta = '00:00'
+
+  // Resumen textual: muestra los rangos horarios DISTINTOS sin fusionar días.
+  // Si todos los días comparten el mismo rango, se muestra uno solo.
+  const rangos = new Set<string>()
+  let minDesde = '23:59'
+  let maxHasta = '00:00'
   for (const p of periodos) {
     const d = p.inicio.slice(11, 16)
     const h = p.fin.slice(11, 16)
-    if (d < desde) desde = d
-    if (h > hasta) hasta = h
+    rangos.add(`${d}–${h}`)
+    if (d < minDesde) minDesde = d
+    if (h > maxHasta) maxHasta = h
   }
-  return { horario: `${desde}–${hasta}`, horarioApertura: { desde, hasta } }
+  const listaRangos = Array.from(rangos).sort()
+  const horario =
+    listaRangos.length === 1
+      ? listaRangos[0]
+      : `${listaRangos.slice(0, 3).join(' · ')}${listaRangos.length > 3 ? ' …' : ''}`
+
+  // horarioApertura se mantiene como el envolvente (min–max) para compatibilidad,
+  // pero la validación por fecha usa los bloques reales de cada día.
+  return { horario, horarioApertura: { desde: minDesde, hasta: maxHasta } }
 }
 
 export function mapSummary(space: BackendSpaceNearby | BackendSpace, distanciaKm: number): SpaceSummary {
   const fotos = fotosDe(space)
   return {
     id: space.id,
+    hostId: space.host_id,
     titulo: space.title || 'Parqueadero en Bogotá',
     direccion: space.address,
     distanciaKm,

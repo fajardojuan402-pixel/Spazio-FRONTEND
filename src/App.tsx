@@ -9,6 +9,7 @@ import SpaceDetail from './pages/SpaceDetail'
 import Payment from './pages/Payment'
 import Confirmation from './pages/Confirmation'
 import MyReservations from './pages/MyReservations'
+import MySpaces from './pages/MySpaces'
 
 /**
  * Router de SPAZIO. Rutas públicas: /registro, /login.
@@ -73,6 +74,14 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Publish />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mis-espacios"
+        element={
+          <ProtectedRoute>
+            <MySpaces />
           </ProtectedRoute>
         }
       />

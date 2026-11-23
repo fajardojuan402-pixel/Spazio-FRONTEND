@@ -1,7 +1,10 @@
 import type { ApiClient } from '../contract'
 import {
   ApiException,
+  type AddAvailabilityRequest,
+  type AddRecurringAvailabilityRequest,
   type AuthUser,
+  type AvailabilityItem,
   type BookingListItem,
   type BookingStatus,
   type BookingsContadores,
@@ -14,6 +17,7 @@ import {
   type EstadoFiltro,
   type GeocodeResult,
   type GeocodeSuggestion,
+  type HostSpaceItem,
   type LoginRequest,
   type LoginResponse,
   type MyBookingsResponse,
@@ -24,6 +28,7 @@ import {
   type SearchParams,
   type SpaceDetail,
   type SpaceSummary,
+  type UpdateSpaceRequest,
   type WompiCheckout,
   type WompiProcessRequest,
   type WompiProcessResponse,
@@ -56,6 +61,22 @@ import {
 } from './mappers'
 
 const STORAGE_KEY = 'spazio.sesion'
+
+/** Día de la semana (0=Lun..6=Dom) de un "YYYY-MM-DD", sin desfase UTC. */
+function weekdayDeISO(iso: string): number {
+  const [y, m, d] = iso.split('-').map(Number)
+  const js = new Date(y, m - 1, d).getDay() // 0=Dom..6=Sab
+  return (js + 6) % 7 // -> 0=Lun..6=Dom
+}
+
+/** Suma un día a un "YYYY-MM-DD" devolviendo otro "YYYY-MM-DD" (hora local). */
+function sumarDiaISO(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  const dt = new Date(y, m - 1, d + 1)
+  const mm = String(dt.getMonth() + 1).padStart(2, '0')
+  const dd = String(dt.getDate()).padStart(2, '0')
+  return `${dt.getFullYear()}-${mm}-${dd}`
+}
 
 export class BackendApiClient implements ApiClient {
   constructor(private baseUrl: string) {}
@@ -175,6 +196,40 @@ export class BackendApiClient implements ApiClient {
   }
 
   async createSpace(body: CreateSpaceRequest): Promise<CreateSpaceResponse> {
+    // Validar los periodos ANTES de crear el espacio. El backend crea y hace
+    // commit del espacio en POST /spaces/ y recién después valida cada
+    // disponibilidad en POST /availabilities/. Si un periodo es inválido (p. ej.
+    // ya terminó respecto a la hora actual), la petición se corta pero el espacio
+    // ya quedó persistido sin horarios: un espacio huérfano. Validar aquí evita
+    // llegar a crear el espacio cuando algún periodo no es publicable.
+    const ahora = Date.now()
+    for (const p of body.periodos) {
+      const inicioMs = new Date(toIsoBogota(`${p.fecha}T${p.desde}`)).getTime()
+      const finMs = new Date(toIsoBogota(`${p.fecha}T${p.hasta}`)).getTime()
+      if (Number.isNaN(inicioMs) || Number.isNaN(finMs)) {
+        throw new ApiException(422, {
+          code: 'AVAILABILITY_INVALID',
+          message: 'Hay un periodo de disponibilidad con fecha u hora inválida.',
+          field: 'periodos',
+        })
+      }
+      if (finMs <= inicioMs) {
+        throw new ApiException(422, {
+          code: 'AVAILABILITY_INVALID',
+          message: 'La hora de fin de un periodo debe ser posterior a la de inicio.',
+          field: 'periodos',
+        })
+      }
+      if (finMs <= ahora) {
+        throw new ApiException(422, {
+          code: 'AVAILABILITY_ENDED',
+          message:
+            'Un periodo de disponibilidad ya terminó. Ajusta la fecha u hora antes de publicar.',
+          field: 'periodos',
+        })
+      }
+    }
+
     let lat = body.lat
     let lng = body.lng
     if (lat == null || lng == null) {
@@ -208,6 +263,140 @@ export class BackendApiClient implements ApiClient {
     }
 
     return { id: created.id, rolAnfitrionActivado: created.host_role_activated }
+  }
+
+  // --- Gestión de "Mis espacios" por el anfitrión (RF-03, RF-05) ------------
+
+  async mySpaces(): Promise<HostSpaceItem[]> {
+    const spaces = await this.request<BackendSpace[]>('/spaces/my-spaces')
+    const ahora = Date.now()
+    return Promise.all(
+      spaces.map(async (s) => {
+        let periodosVigentes = 0
+        try {
+          const avails = await this.request<BackendAvailability[]>(
+            `/availabilities/space/${s.id}`,
+          )
+          periodosVigentes = avails.filter((a) => new Date(a.end_time).getTime() > ahora).length
+        } catch {
+          void 0
+        }
+        return {
+          id: s.id,
+          titulo: s.title || 'Parqueadero en Bogotá',
+          direccion: s.address,
+          precioHora: s.price_per_hour,
+          activo: s.is_active,
+          foto: fotosDe(s)[0],
+          periodosVigentes,
+        }
+      }),
+    )
+  }
+
+  async updateSpace(id: string, body: UpdateSpaceRequest): Promise<void> {
+    const payload: Record<string, unknown> = {}
+    if (body.precioHora != null) payload.price_per_hour = body.precioHora
+    if (body.activo != null) payload.is_active = body.activo
+    if (body.condiciones != null) payload.conditions = body.condiciones
+    await this.request<BackendSpace>(`/spaces/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  }
+
+  async deleteSpace(id: string): Promise<void> {
+    await this.request(`/spaces/${id}`, { method: 'DELETE' })
+  }
+
+  async listAvailabilities(spaceId: string): Promise<AvailabilityItem[]> {
+    const avails = await this.request<BackendAvailability[]>(
+      `/availabilities/space/${spaceId}`,
+    )
+    const ahora = Date.now()
+    return avails.map((a) => ({
+      id: a.id,
+      fecha: fechaParte(a.start_time),
+      desde: horaParte(a.start_time),
+      hasta: horaParte(a.end_time),
+      vencido: new Date(a.end_time).getTime() <= ahora,
+    }))
+  }
+
+  async addAvailability(body: AddAvailabilityRequest): Promise<AvailabilityItem> {
+    const a = await this.request<BackendAvailability>('/availabilities/', {
+      method: 'POST',
+      body: JSON.stringify({
+        space_id: body.spaceId,
+        start_time: toIsoBogota(`${body.fecha}T${body.desde}`),
+        end_time: toIsoBogota(`${body.fecha}T${body.hasta}`),
+      }),
+    })
+    return {
+      id: a.id,
+      fecha: fechaParte(a.start_time),
+      desde: horaParte(a.start_time),
+      hasta: horaParte(a.end_time),
+      vencido: new Date(a.end_time).getTime() <= Date.now(),
+    }
+  }
+
+  async addRecurringAvailability(
+    body: AddRecurringAvailabilityRequest,
+  ): Promise<AvailabilityItem[]> {
+    // Compatibilidad con el backend "antiguo" (Backend-SPAZIO): no expone
+    // POST /availabilities/recurring. Expandimos la regla recurrente en el
+    // cliente a bloques por cada día coincidente y los creamos uno por uno con
+    // POST /availabilities/ (que sí existe). El comportamiento visible es el
+    // mismo que el endpoint recurrente: genera un bloque por día del rango que
+    // caiga en los weekdays elegidos.
+    const ahora = Date.now()
+    const creados: AvailabilityItem[] = []
+
+    let actual = body.startDate
+    let guard = 0
+    // Tope defensivo: ~10 años de días para no colgarse ante fechas corruptas.
+    while (actual <= body.endDate && guard < 3660) {
+      guard += 1
+      if (body.weekdays.includes(weekdayDeISO(actual))) {
+        const startIso = toIsoBogota(`${actual}T${body.desde}`)
+        const endIso = toIsoBogota(`${actual}T${body.hasta}`)
+        // Omite bloques ya terminados (igual que la validación del backend).
+        if (new Date(endIso).getTime() > ahora) {
+          const a = await this.request<BackendAvailability>('/availabilities/', {
+            method: 'POST',
+            body: JSON.stringify({
+              space_id: body.spaceId,
+              start_time: startIso,
+              end_time: endIso,
+            }),
+          })
+          creados.push({
+            id: a.id,
+            fecha: fechaParte(a.start_time),
+            desde: horaParte(a.start_time),
+            hasta: horaParte(a.end_time),
+            vencido: new Date(a.end_time).getTime() <= ahora,
+          })
+        }
+      }
+      actual = sumarDiaISO(actual)
+    }
+
+    if (creados.length === 0) {
+      throw new ApiException(400, {
+        code: 'AVAILABILITY_RECURRING_EMPTY',
+        message:
+          'La regla recurrente no generó ningún bloque nuevo: revisa los días y el rango de fechas.',
+        field: 'weekdays',
+      })
+    }
+
+    return creados
+  }
+
+  async removeAvailability(id: string): Promise<void> {
+    await this.request(`/availabilities/${id}`, { method: 'DELETE' })
   }
 
   async createBooking(body: CreateBookingRequest): Promise<CreateBookingResponse> {

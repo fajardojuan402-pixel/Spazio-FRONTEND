@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, ArrowRight, CalendarDays, CalendarX, Car, Clock, Images, MapPin } from 'lucide-react'
+import { ArrowLeft, ArrowRight, CalendarX, Car, Clock, Images, MapPin } from 'lucide-react'
 import Layout from '../components/layout/Layout'
 import Stepper from '../components/layout/Stepper'
 import Button from '../components/ui/Button'
 import Badge from '../components/ui/Badge'
 import Alert from '../components/ui/Alert'
 import Skeleton from '../components/ui/Skeleton'
+import DatePicker from '../components/ui/DatePicker'
 import { useSpace, useCreateBooking } from '../hooks/queries'
-import { formatCOP, formatLongDate } from '../lib/format'
+import { useSesion } from '../session/SesionContext'
+import { bloquesPorFecha, type BloqueHorario } from '../api/backend/mappers'
+import { formatCOP, formatShortDate } from '../lib/format'
 import { calcularMonto } from '../lib/pricing'
-import { hoursBetween, hoyISO, isWholeHours, validarHorario } from '../lib/time'
+import { hoursBetween, isWholeHours, toMinutes, validarHorario } from '../lib/time'
 import { ApiException } from '../api/types'
 
 /**
@@ -24,22 +27,21 @@ export default function SpaceDetail() {
   const navigate = useNavigate()
   const { data: space, isLoading, isError, refetch } = useSpace(id)
   const crearReserva = useCreateBooking()
+  const { cuenta } = useSesion()
 
   const [principal, setPrincipal] = useState(0)
-  const [fecha, setFecha] = useState(hoyISO())
+  // Sin fecha automática: el usuario elige su propia fecha (no pasada).
+  const [fecha, setFecha] = useState('')
   const [desde, setDesde] = useState('10:00')
   const [hasta, setHasta] = useState('13:00')
   const [conflicto, setConflicto] = useState(false)
 
-  // Al cargar el espacio, propone por defecto la fecha del primer periodo
-  // disponible (su parte "YYYY-MM-DD"), para que la reserva caiga dentro del
-  // horario real y no quede en una fecha pasada.
-  useEffect(() => {
-    const primer = space?.periodos?.[0]
-    if (primer?.inicio) {
-      setFecha(primer.inicio.slice(0, 10))
-    }
-  }, [space])
+  // Bloques de disponibilidad agrupados por fecha. No se fusionan horas de días
+  // distintos: cada fecha conserva sus propios bloques.
+  const bloquesDia = useMemo(
+    () => (space ? bloquesPorFecha(space.periodos) : new Map<string, BloqueHorario[]>()),
+    [space],
+  )
 
   if (isLoading) {
     return (
@@ -65,12 +67,29 @@ export default function SpaceDetail() {
     )
   }
 
-  const { desde: openFrom, hasta: openTo } = space.horarioApertura
-  const validacion = validarHorario(desde, hasta, openFrom, openTo)
+  const esPropietario = Boolean(cuenta && space.hostId && cuenta.id === space.hostId)
+
+  // Bloques disponibles de la fecha elegida (vacío si no hay o no se eligió fecha).
+  const bloquesDeFecha: BloqueHorario[] = fecha ? bloquesDia.get(fecha) ?? [] : []
+  const fechasDisponibles = Array.from(bloquesDia.keys()).sort()
+
+  // La selección debe caber ENTERA dentro de alguno de los bloques de ese día.
+  const dentroDeAlgunBloque = bloquesDeFecha.some(
+    (b) => toMinutes(desde) >= toMinutes(b.desde) && toMinutes(hasta) <= toMinutes(b.hasta),
+  )
+  const validacion = validarHorario(
+    desde,
+    hasta,
+    // Para el mensaje de rango usamos el bloque que contiene «desde», o el primero.
+    (bloquesDeFecha.find((b) => toMinutes(desde) >= toMinutes(b.desde)) ?? bloquesDeFecha[0])?.desde ?? '00:00',
+    (bloquesDeFecha.find((b) => toMinutes(hasta) <= toMinutes(b.hasta)) ?? bloquesDeFecha[0])?.hasta ?? '23:59',
+  )
   const horasCompletas = isWholeHours(desde, hasta)
   const horas = hoursBetween(desde, hasta)
   const total = calcularMonto(space.precioHora, desde, hasta)
-  const valido = validacion.ok && horasCompletas
+  const horaValida = hoursBetween(desde, hasta) > 0 && dentroDeAlgunBloque && horasCompletas
+  const fechaSinBloques = Boolean(fecha) && bloquesDeFecha.length === 0
+  const valido = Boolean(fecha) && !fechaSinBloques && horaValida && !esPropietario
 
   const onReservar = async () => {
     if (!valido) return
@@ -168,11 +187,13 @@ export default function SpaceDetail() {
 
           <div className="mt-6">
             <label className="mb-2 block text-sm font-semibold text-ink" htmlFor="fecha">Fecha de la reserva</label>
-            <div className="relative">
-              <input id="fecha" className="w-full rounded-lg border border-line bg-white px-4 py-3 pr-11 text-sm" value={formatLongDate(fecha)} readOnly />
-              <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} className="absolute inset-0 cursor-pointer opacity-0" aria-label="Seleccionar fecha" />
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-subtle"><CalendarDays size={20} /></span>
-            </div>
+            <DatePicker
+              id="fecha"
+              value={fecha}
+              onChange={setFecha}
+              placeholder="Elige la fecha de tu reserva"
+              ariaLabel="Seleccionar fecha de la reserva"
+            />
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-4">
@@ -191,8 +212,48 @@ export default function SpaceDetail() {
             </div>
           </div>
 
-          {!validacion.ok && <p className="mt-3 text-sm text-danger">{validacion.motivo}</p>}
-          {validacion.ok && !horasCompletas && (
+          {/* Bloques disponibles de la fecha elegida (según la fecha, sin fusionar días). */}
+          {fecha && bloquesDeFecha.length > 0 && (
+            <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
+              <p className="text-sm font-semibold text-ink">Disponible el {formatShortDate(fecha)}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {bloquesDeFecha.map((b, i) => (
+                  <span key={i} className="chip-muted text-sm">{b.desde} – {b.hasta}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {fecha && fechasDisponibles.length > 0 && bloquesDeFecha.length === 0 && (
+            <div className="mt-4 rounded-lg border border-line bg-canvas p-3">
+              <p className="text-sm font-semibold text-ink">Fechas con disponibilidad</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {fechasDisponibles.slice(0, 6).map((f) => (
+                  <span key={f} className="chip-muted text-sm">{formatShortDate(f)}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {esPropietario && (
+            <Alert tone="warn" className="mt-3" title="Este espacio es tuyo">
+              No puedes reservar un espacio que publicaste. Gestiona su disponibilidad desde «Mis espacios».
+            </Alert>
+          )}
+          {!esPropietario && !fecha && (
+            <p className="mt-3 text-sm text-danger">Elige la fecha de tu reserva.</p>
+          )}
+          {!esPropietario && fechaSinBloques && (
+            <p className="mt-3 text-sm text-danger">
+              No hay disponibilidad para esa fecha. Elige una de las fechas disponibles.
+            </p>
+          )}
+          {!esPropietario && fecha && !fechaSinBloques && !dentroDeAlgunBloque && (
+            <p className="mt-3 text-sm text-danger">
+              El horario debe estar dentro de un bloque disponible de ese día.
+              {validacion.motivo ? ` ${validacion.motivo}` : ''}
+            </p>
+          )}
+          {!esPropietario && fecha && !fechaSinBloques && dentroDeAlgunBloque && !horasCompletas && (
             <p className="mt-3 text-sm text-danger">Elige horas completas (en punto).</p>
           )}
           {conflicto && (
@@ -208,7 +269,7 @@ export default function SpaceDetail() {
             className="mt-5 w-full py-3.5 text-base"
             rightIcon={<ArrowRight size={18} />}
           >
-            Reservar y pagar
+            {esPropietario ? 'No disponible (espacio propio)' : 'Reservar y pagar'}
           </Button>
           <p className="mt-3 text-center text-sm text-subtle">No se cobra ahora. El monto está visible antes de pagar.</p>
         </aside>

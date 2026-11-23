@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, Check, Lightbulb } from 'lucide-react'
+import { ApiException } from '../api/types'
 import Layout from '../components/layout/Layout'
 import Card from '../components/ui/Card'
 import Button from '../components/ui/Button'
@@ -14,7 +15,6 @@ import { useCreateSpace } from '../hooks/queries'
 import { useSesion } from '../session/SesionContext'
 import { useToast } from '../components/ui/toast'
 import { formatCOP } from '../lib/format'
-import { hoyISO } from '../lib/time'
 import type { PeriodoInput, TipoVehiculo } from '../api/types'
 
 const TIPS = [
@@ -44,9 +44,8 @@ export default function Publish() {
     'Espacio para un carro. Ingresa por la puerta principal y respeta el horario reservado. No se permite dejar objetos fuera del vehículo.',
   )
   const [fotos, setFotos] = useState<string[]>([])
-  const [periodos, setPeriodos] = useState<PeriodoInput[]>([
-    { fecha: hoyISO(), desde: '08:00', hasta: '18:00' },
-  ])
+  // Sin periodo automático: el anfitrión agrega sus propias fechas (no pasadas).
+  const [periodos, setPeriodos] = useState<PeriodoInput[]>([])
 
   // Qué falta para poder publicar (RF-03).
   const faltantes = useMemo(() => {
@@ -79,8 +78,12 @@ export default function Publish() {
         toast.show('Tu parqueadero quedó publicado', 'success')
       }
       navigate('/buscar')
-    } catch {
-      toast.show('No pudimos publicar el espacio. Inténtalo de nuevo.', 'danger')
+    } catch (e) {
+      const msg =
+        e instanceof ApiException
+          ? e.message
+          : 'No pudimos publicar el espacio. Inténtalo de nuevo.'
+      toast.show(msg, 'danger')
     }
   }
 

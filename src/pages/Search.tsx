@@ -80,7 +80,7 @@ export default function Search() {
         setCentro(punto)
         setQuery({ q: 'Mi ubicación', radioKm: radio, lat: latitude, lng: longitude })
         try {
-          const geo = await api.geocode(`${latitude},${longitude}`)
+          const geo = await api.reverseGeocode(latitude, longitude)
           setPlace(geo.label)
         } catch {
           setPlace('Mi ubicación')

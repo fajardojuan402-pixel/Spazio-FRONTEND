@@ -3,21 +3,28 @@ import { MapContainer, Marker, TileLayer, useMap, useMapEvents } from 'react-lea
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { MapPin, Trash2 } from 'lucide-react'
-import AddressAutocomplete from '../search/AddressAutocomplete'
+import AddressAutocomplete, { type AddressAutocompleteHandle } from '../search/AddressAutocomplete'
 import { api } from '../../api/client'
 
 const BOGOTA: [number, number] = [4.6097, -74.0817]
 
-/** Pin rojo arrastrable (estilo Google) para marcar la ubicación exacta. */
+/**
+ * Pin rojo arrastrable (estilo Google) para marcar la ubicación exacta.
+ * El icono mide 24×24 y su anclaje está en la punta inferior (12, 24), de modo
+ * que la punta del pin coincide exactamente con el punto de coordenadas donde
+ * el usuario hizo clic. Al estar rotado -45°, la "punta" cae en la esquina
+ * inferior-izquierda del cuadro; se compensa posicionando el div dentro del
+ * cuadro de 24×24 para que la punta quede en el centro-inferior.
+ */
 const pinIcon = L.divIcon({
   className: 'spazio-pub-pin',
   html: `<div style="
-    transform: translate(-50%, -100%);
     width:24px; height:24px; border-radius:50% 50% 50% 0;
-    background:#d93636; border:2px solid #fff; rotate:-45deg;
+    background:#d93636; border:2px solid #fff; transform: rotate(-45deg);
+    transform-origin: center;
     box-shadow:0 2px 6px rgba(0,0,0,.35);"></div>`,
-  iconSize: [0, 0],
-  iconAnchor: [0, 0],
+  iconSize: [24, 24],
+  iconAnchor: [12, 24],
 })
 
 /** Mueve el mapa cuando cambian las coordenadas desde fuera (texto/sugerencia). */
@@ -53,28 +60,54 @@ export default function LocationPicker({
 }) {
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null)
   const markerRef = useRef<L.Marker>(null)
+  const autoRef = useRef<AddressAutocompleteHandle>(null)
+  const [geoError, setGeoError] = useState<string | null>(null)
 
   // Al elegir una sugerencia: fija el pin y las coordenadas.
   const onPickSugerencia = (s: { label: string; lat: number; lng: number }) => {
     const c = { lat: s.lat, lng: s.lng }
+    setGeoError(null)
     setCoords(c)
     onChange(s.label, c)
   }
 
   // Al mover/colocar el pin: geocodifica inverso y actualiza la dirección.
+  // Se suprime la reapertura del dropdown porque el cambio de texto es
+  // programático (viene del arrastre del pin), no de que el usuario escriba.
   const fijarPin = async (lat: number, lng: number) => {
     const c = { lat, lng }
+    setGeoError(null)
     setCoords(c)
+    autoRef.current?.suppressNextOpen()
     onChange(direccion, c) // actualiza coords de inmediato
     try {
       const geo = await api.reverseGeocode(lat, lng)
+      autoRef.current?.suppressNextOpen()
       onChange(geo.label, c)
     } catch {
       /* si falla el inverso, dejamos la dirección escrita */
     }
   }
 
+  // Al tipear/pegar una dirección y confirmar (Enter o perder foco), geocodifica
+  // el texto y coloca el pin sin requerir un clic manual en el mapa.
+  const geocodificarTexto = async () => {
+    const texto = direccion.trim()
+    if (texto.length < 3) return
+    setGeoError(null)
+    try {
+      const geo = await api.geocode(texto)
+      const c = { lat: geo.lat, lng: geo.lng }
+      setCoords(c)
+      autoRef.current?.suppressNextOpen()
+      onChange(geo.label, c)
+    } catch {
+      setGeoError('No pudimos ubicar esa dirección. Ajusta el texto o marca el punto en el mapa.')
+    }
+  }
+
   const quitarPin = () => {
+    setGeoError(null)
     setCoords(null)
     onChange(direccion, null)
   }
@@ -82,7 +115,27 @@ export default function LocationPicker({
   return (
     <div>
       <label className="mb-2 block text-sm font-semibold text-ink" htmlFor="direccion">Dirección</label>
-      <AddressAutocomplete id="direccion" value={direccion} onChange={(v) => onChange(v, coords)} onPick={onPickSugerencia} />
+      <div
+        onBlurCapture={(e) => {
+          // Geocodifica al salir del campo de texto (no al navegar dentro del dropdown).
+          if (!e.currentTarget.contains(e.relatedTarget as Node) && !coords) void geocodificarTexto()
+        }}
+        onKeyDownCapture={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            void geocodificarTexto()
+          }
+        }}
+      >
+        <AddressAutocomplete
+          ref={autoRef}
+          id="direccion"
+          value={direccion}
+          onChange={(v) => onChange(v, coords)}
+          onPick={onPickSugerencia}
+        />
+      </div>
+      {geoError && <p className="mt-2 text-sm text-danger">{geoError}</p>}
 
       <div className="mt-3 overflow-hidden rounded-lg border border-line">
         <MapContainer center={coords ? [coords.lat, coords.lng] : BOGOTA} zoom={coords ? 16 : 12} style={{ height: 260, width: '100%' }} scrollWheelZoom>

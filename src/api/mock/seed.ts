@@ -14,6 +14,7 @@ export const SEED_USER = {
 export const SEED_SPACES: SpaceDetail[] = [
   {
     id: 'centro',
+    hostId: 'u-andrea',
     titulo: 'Parqueadero Centro',
     direccion: 'Cra. 7 # 16-24, Centro',
     distanciaKm: 0.4,
@@ -36,6 +37,7 @@ export const SEED_SPACES: SpaceDetail[] = [
   },
   {
     id: 'chapinero',
+    hostId: 'u-andrea',
     titulo: 'Cubierto Chapinero',
     direccion: 'Calle 63 # 11-40, Chapinero',
     distanciaKm: 0.8,

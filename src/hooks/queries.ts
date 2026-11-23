@@ -3,11 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type {
+  AddAvailabilityRequest,
+  AddRecurringAvailabilityRequest,
   CreateBookingRequest,
   CreateSpaceRequest,
   EstadoFiltro,
   PayRequest,
   SearchParams,
+  UpdateSpaceRequest,
 } from '../api/types'
 
 // --- Búsqueda y espacios ----------------------------------------------------
@@ -33,6 +36,73 @@ export function useSpace(id: string | undefined) {
 export function useCreateSpace() {
   return useMutation({
     mutationFn: (body: CreateSpaceRequest) => api.createSpace(body),
+  })
+}
+
+// --- Mis espacios (gestión del anfitrión) -----------------------------------
+
+export function useMySpaces() {
+  return useQuery({
+    queryKey: ['spaces', 'mine'],
+    queryFn: () => api.mySpaces(),
+  })
+}
+
+export function useUpdateSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateSpaceRequest }) =>
+      api.updateSpace(id, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['spaces', 'mine'] }),
+  })
+}
+
+export function useDeleteSpace() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteSpace(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['spaces', 'mine'] }),
+  })
+}
+
+export function useAvailabilities(spaceId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['availabilities', spaceId],
+    queryFn: () => api.listAvailabilities(spaceId!),
+    enabled: !!spaceId && enabled,
+  })
+}
+
+export function useAddAvailability() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AddAvailabilityRequest) => api.addAvailability(body),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['availabilities', variables.spaceId] })
+      qc.invalidateQueries({ queryKey: ['spaces', 'mine'] })
+    },
+  })
+}
+
+export function useAddRecurringAvailability() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: AddRecurringAvailabilityRequest) => api.addRecurringAvailability(body),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['availabilities', variables.spaceId] })
+      qc.invalidateQueries({ queryKey: ['spaces', 'mine'] })
+    },
+  })
+}
+
+export function useRemoveAvailability() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id }: { id: string; spaceId: string }) => api.removeAvailability(id),
+    onSuccess: (_data, variables) => {
+      qc.invalidateQueries({ queryKey: ['availabilities', variables.spaceId] })
+      qc.invalidateQueries({ queryKey: ['spaces', 'mine'] })
+    },
   })
 }
 

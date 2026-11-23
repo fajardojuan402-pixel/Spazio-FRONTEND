@@ -5,20 +5,25 @@ import { useSesion } from '../../session/SesionContext'
 import { initials } from '../../lib/format'
 import Logo from './Logo'
 
-const NAV = [
+const NAV_BASE = [
   { to: '/buscar', label: 'Buscar parqueadero' },
   { to: '/mis-reservas', label: 'Mis reservas' },
   { to: '/publicar', label: 'Publicar espacio' },
 ]
+
+// "Mis espacios" solo es relevante para anfitriones (quienes ya publicaron).
+const NAV_ANFITRION = { to: '/mis-espacios', label: 'Mis espacios' }
 
 /**
  * Header común (SDD P-01…P-09). Sin sesión: enlaces "Iniciar sesión" y
  * "Crear cuenta". Con sesión: avatar con iniciales + nombre y menú de salir.
  */
 export default function Header() {
-  const { estaAutenticado, cuenta, cerrar } = useSesion()
+  const { estaAutenticado, cuenta, rolAnfitrion, cerrar } = useSesion()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+
+  const nav = rolAnfitrion ? [...NAV_BASE, NAV_ANFITRION] : NAV_BASE
 
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-white/95 backdrop-blur">
@@ -30,7 +35,7 @@ export default function Header() {
 
         {estaAutenticado && (
           <nav className="hidden items-center gap-8 md:flex">
-            {NAV.map((item) => (
+            {nav.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

@@ -4,6 +4,43 @@ import Badge from '../../components/ui/Badge'
 
 const MAX_FOTOS = 3
 const MAX_BYTES = 5 * 1024 * 1024 // 5 MB
+const MAX_ANCHO = 800 // px: ancho máximo tras redimensionar
+const CALIDAD_JPEG = 0.7 // compresión JPEG
+
+/**
+ * Redimensiona (máx. 800px de ancho) y comprime una imagen a JPEG (calidad 0.7)
+ * devolviendo un data URL Base64 liviano. Evita enviar payloads enormes
+ * (p. ej. 20 MB) en POST /spaces/. Si algo falla, cae al data URL original.
+ */
+function comprimirImagen(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo.'))
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const img = new Image()
+      img.onerror = () => resolve(dataUrl) // si no carga, usamos el original
+      img.onload = () => {
+        const escala = img.width > MAX_ANCHO ? MAX_ANCHO / img.width : 1
+        const w = Math.round(img.width * escala)
+        const h = Math.round(img.height * escala)
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) return resolve(dataUrl)
+        ctx.drawImage(img, 0, 0, w, h)
+        try {
+          resolve(canvas.toDataURL('image/jpeg', CALIDAD_JPEG))
+        } catch {
+          resolve(dataUrl)
+        }
+      }
+      img.src = dataUrl
+    }
+    reader.readAsDataURL(file)
+  })
+}
 
 /**
  * Gestor de fotos del espacio (RF-03, RI-02): de 0 a 3 fotos, JPG/PNG máx 5 MB,
@@ -19,7 +56,7 @@ export default function PhotosManager({
   const inputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleFiles = (files: FileList | null) => {
+  const handleFiles = async (files: FileList | null) => {
     setError(null)
     if (!files || files.length === 0) return
     const restante = MAX_FOTOS - fotos.length
@@ -34,11 +71,13 @@ export default function PhotosManager({
         setError('Cada foto debe pesar máximo 5 MB.')
         continue
       }
-      const reader = new FileReader()
-      reader.onload = () => {
-        onChange([...fotosRef.current, reader.result as string])
+      try {
+        // Redimensiona (máx. 800px) y comprime (JPEG 0.7) antes de guardar el Base64.
+        const comprimida = await comprimirImagen(file)
+        onChange([...fotosRef.current, comprimida])
+      } catch {
+        setError('No pudimos procesar una de las imágenes. Intenta con otra.')
       }
-      reader.readAsDataURL(file)
     }
     if (inputRef.current) inputRef.current.value = ''
   }
@@ -112,7 +151,7 @@ export default function PhotosManager({
         accept="image/jpeg,image/png"
         multiple
         className="sr-only"
-        onChange={(e) => handleFiles(e.target.files)}
+        onChange={(e) => void handleFiles(e.target.files)}
       />
 
       {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
